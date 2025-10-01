@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>방문자 현재 위치 날씨</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#0f172a; --text:#e2e8f0; --muted:#94a3b8;
+    --accent:#6aa3ff; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --radius:14px; --shadow:0 10px 30px rgba(0,0,0,.35);
+  }
+  html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Malgun Gothic,sans-serif}
+  .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+  h3{margin:0 0 6px 0;font-size:16px}
+  p{margin:4px 0}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .chip{background:#111827;border:1px solid #1f2937;border-radius:999px;padding:4px 10px;color:#cbd5e1}
+  .muted{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h3 id="title">현재 위치 날씨</h3>
+  <p class="muted" id="subtitle">위치 확인 중…</p>
+  <div id="wx">
+    <p>상태: <b id="cond">-</b></p>
+    <div class="row">
+      <span class="chip">현재 <b id="t_now">-</b>°C</span>
+      <span class="chip">체감 <b id="t_feel">-</b>°C</span>
+      <span class="chip">바람 <b id="wind">-</b> m/s</span>
+      <span class="chip">최고/최저 <b id="t_hi">-</b>/<b id="t_lo">-</b>°C</span>
+      <span class="chip">강수확률 <b id="pop">-</b>%</span>
+    </div>
+    <p class="muted" id="sun"></p>
+  </div>
+</div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+const wxText=(c)=>{
+  const m={0:"맑음",1:"대체로 맑음",2:"부분적 흐림",3:"흐림",45:"안개",48:"서리 안개",
+    51:"약한 이슬비",53:"보통 이슬비",55:"강한 이슬비",61:"약한 비",63:"보통 비",65:"강한 비",
+    66:"얼어붙는 약한 비",67:"얼어붙는 강한 비",71:"약한 눈",73:"보통 눈",75:"강한 눈",77:"싸락눈",
+    80:"약한 소나기",81:"보통 소나기",82:"강한 소나기",85:"약한 눈 소나기",86:"강한 눈 소나기",
+    95:"천둥번개(약~보통)",96:"천둥+약한 우박",99:"천둥+강한 우박"};
+  return m[c] || "날씨 정보";
+};
+
+async function getIPLoc(){
+  // 무키(ipapi.co) 간단 폴백용 — 과도한 트래픽이면 토큰 가입 검토
+  const r = await fetch("https://ipapi.co/json/");
+  if(!r.ok) throw new Error("ipapi failed");
+  const j = await r.json();
+  return {
+    lat: j.latitude, lon: j.longitude,
+    label: [j.city, j.region, j.country_name].filter(Boolean).join(", ")
+  };
+}
+
+async function getWeather(lat, lon){
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Seoul";
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
+    + `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m`
+    + `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset`
+    + `&timezone=${encodeURIComponent(tz)}`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error("wx failed");
+  return await r.json();
+}
+
+function render(label, data){
+  $("subtitle").textContent = label ? `위치: ${label}` : "";
+  $("cond").textContent = wxText(data.current.weather_code);
+  $("t_now").textContent = data.current.temperature_2m?.toFixed?.(1) ?? data.current.temperature_2m;
+  $("t_feel").textContent = data.current.apparent_temperature?.toFixed?.(1) ?? data.current.apparent_temperature;
+  $("wind").textContent = data.current.wind_speed_10m;
+  $("t_hi").textContent = data.daily.temperature_2m_max?.[0];
+  $("t_lo").textContent = data.daily.temperature_2m_min?.[0];
+  $("pop").textContent = data.daily.precipitation_probability_max?.[0] ?? 0;
+  $("sun").textContent = `일출 ${data.daily.sunrise?.[0]} · 일몰 ${data.daily.sunset?.[0]}`;
+}
+
+(async ()=>{
+  try{
+    // 1) GPS 우선
+    const pos = await new Promise((res, rej)=>{
+      if(!navigator.geolocation) return rej(new Error("no geo"));
+      navigator.geolocation.getCurrentPosition(res, rej, {timeout: 6000, maximumAge: 0, enableHighAccuracy: false});
+    });
+    const lat = pos.coords.latitude, lon = pos.coords.longitude;
+    $("subtitle").textContent = "브라우저 위치 사용(동의)";
+    const wx = await getWeather(lat, lon);
+    render("", wx);
+  }catch(e){
+    // 2) IP 폴백
+    try{
+      const loc = await getIPLoc();
+      const wx = await getWeather(loc.lat, loc.lon);
+      render(loc.label, wx);
+    }catch(e2){
+      $("subtitle").textContent = "위치 확인 실패";
+      $("cond").textContent = "—";
+    }
+  }
+})();
+</script>
+</body>
+</html>
